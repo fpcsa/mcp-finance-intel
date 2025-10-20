@@ -29,7 +29,7 @@ from typing import Dict, Any, Literal, Optional
 
 import numpy as np
 import pandas as pd
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from adapters.ccxt_adapter import get_ohlcv as ccxt_ohlcv, ohlcv_to_dataframe as ccxt_df
 from adapters.yfinance_adapter import get_ohlcv as yf_ohlcv, ohlcv_to_dataframe as yf_df
@@ -41,18 +41,48 @@ from analytics.risk import (
 
 AnalysisMode = Literal["basic", "technical", "risk_plus", "full"]
 
+_ALLOWED_INTERVALS = {
+    "1m","3m","5m","15m","30m",
+    "1h","2h","4h","6h","8h","12h",
+    "1d","3d","1w","1wk","1M","1mo",
+}
+
 class AnalyzeInput(BaseModel):
     symbol: str = Field(..., description='e.g., "BTC/USDT" or "AAPL"')
-    window_days: int = Field(90, ge=30, le=365)
+    interval: str = Field("1d", description='e.g., "1d", "4h", "1wk"')
+    limit: int = Field(120, ge=30, le=2000)
     mode: AnalysisMode = Field("basic", description="basic | technical | risk_plus | full")
+
+    @field_validator("interval")
+    @classmethod
+    def _valid_interval(cls, v: str) -> str:
+        if v not in _ALLOWED_INTERVALS:
+            raise ValueError(f"interval must be one of {sorted(_ALLOWED_INTERVALS)}")
+        return v
+
+class MetadataInfo(BaseModel):
+    """Describes contextual and unit metadata for the analysis result."""
+    interval: str = Field(..., description="Data interval used (e.g., '1d', '4h', '1wk')")
+    limit: int = Field(..., description="Number of bars used for the analysis window")
+    units: Dict[str, str] = Field(
+        ...,
+        description="Unit semantics for numeric fields (e.g., 'percentage', 'fraction', 'unitless')"
+    )
 
 class AnalyzeOutput(BaseModel):
     symbol: str
-    window_used_days: int
+    window_used_bars: int
     trend_regime: str
-    volatility_annualized: float
-    sharpe: float
-    max_drawdown: float
+    window_return: Optional[float] = Field(
+        None, description="Fractional return over the window (e.g 0.10 = +10%)"
+    )
+    volatility_annualized: float = Field(
+        ..., description="Fractional annualized volatility (e.g 0.55 = 55%)"
+    )
+    sharpe: float = Field(..., description="Unitless risk-adjusted return (Sharpe ratio)")
+    max_drawdown: float = Field(
+        ..., description="Fractional drawdown (e.g., -0.25 = -25%)"
+    )
     rsi_last: float | None
     summary: str
     indicators: Optional[Dict[str, Any]] = None
@@ -62,8 +92,8 @@ class AnalyzeOutput(BaseModel):
     bars_used: int
     mode: AnalysisMode = "basic"
     not_investment_advice: bool = True
+    metadata: MetadataInfo
     checksum: str
-
 
 def _is_crypto(symbol: str) -> bool:
     return "/" in symbol
@@ -82,16 +112,26 @@ def analyze_asset_tool(input: AnalyzeInput) -> AnalyzeOutput:
     Converts the adapter payload into a DataFrame via ohlcv_to_dataframe.
     """
     # Pull daily bars covering at least window_days; adapters trim limits internally
+
     if _is_crypto(input.symbol):
-        payload = ccxt_ohlcv(input.symbol, timeframe="1d", limit=input.window_days + 10)
+        payload = ccxt_ohlcv(input.symbol, timeframe=input.interval, limit=input.limit + 10)
         df = ccxt_df(payload)
     else:
-        payload = yf_ohlcv(input.symbol, interval="1d", limit=input.window_days + 10)
+        # yfinance supports only 1d/1h/1wk
+        if input.interval not in {"1d","1h","1wk"}:
+            raise ValueError(f"Interval '{input.interval}' not supported for equities via yfinance.")
+        payload = yf_ohlcv(input.symbol, interval=input.interval, limit=input.limit + 10)
         df = yf_df(payload)
 
     # Use only last N days with valid closes
-    prices = df["close"].dropna().tail(input.window_days)
+    prices = df["close"].dropna().tail(input.limit)
     bars_used = int(prices.shape[0])
+
+    
+    # Compute total return over the analyzed window
+    window_return = None
+    if bars_used >= 2:
+        window_return = float(prices.iloc[-1] / prices.iloc[0] - 1.0)
 
     # Metrics
     returns = prices.pct_change()
@@ -168,6 +208,8 @@ def analyze_asset_tool(input: AnalyzeInput) -> AnalyzeOutput:
 
     # Build summary add-ons (kept compact)
     extra_bits = []
+    if window_return is not None:
+        extra_bits.append(f"Window ret: {window_return:+.2%}")
     if indicators_out:
         mh = indicators_out.get("macd_hist")
         if mh is not None:
@@ -185,20 +227,37 @@ def analyze_asset_tool(input: AnalyzeInput) -> AnalyzeOutput:
         summary = f"{input.symbol} (0d) No usable data in the requested window. Signals are indicative only."
               
     summary = (
-        f"{input.symbol} ({bars_used}d) regime: {regime}. "
-        f"Ann. vol: {vol:.2%}, Sharpe: {sr:.2f}, Max DD: {mdd:.2%}. "
-        + (f"RSI(14): {rsi_last:.1f}. " if rsi_last is not None else "")
-        + (" | " + " | ".join(extra_bits) if extra_bits else "")
-        + " Signals are indicative only."
+    f"{input.symbol} ({bars_used}bars {input.interval}) regime: {regime}. "
+    f"Ann. vol: {vol:.2%}, Sharpe: {sr:.2f}, Max DD: {mdd:.2%}. "
+    + (f"RSI(14): {rsi_last:.1f}. " if rsi_last is not None else "")
+    + (" | " + " | ".join(extra_bits) if extra_bits else "")
+    + "  Signals are indicative only."
     )
-    
+
     asof = _iso_now_utc()
     src = payload["source"]
 
+    metadata = {
+        "interval": input.interval,
+        "limit": input.limit,
+        "units": {
+            "window_return": "fraction",
+            "volatility_annualized": "fraction",
+            "max_drawdown": "fraction",
+            "var_hist_95": "fraction",
+            "var_param_95": "fraction",
+            "cvar_95": "fraction",
+            "bb_percent": "fraction",
+            "sharpe": "unitless",
+            "sortino": "unitless"
+        }
+    }
+
     result = {
         "symbol": input.symbol,
-        "window_used_days": bars_used,
+        "window_used_bars": bars_used,
         "trend_regime": regime,
+        "window_return": None if window_return is None else round(window_return, 6),
         "volatility_annualized": round(vol, 6),
         "sharpe": round(sr, 6),
         "max_drawdown": round(mdd, 6),
@@ -211,6 +270,8 @@ def analyze_asset_tool(input: AnalyzeInput) -> AnalyzeOutput:
         "bars_used": bars_used,
         "mode": input.mode,
         "not_investment_advice": True,
+        "metadata": metadata
     }
+    
     result["checksum"] = _checksum(result)
     return AnalyzeOutput(**result)
