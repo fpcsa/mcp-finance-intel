@@ -291,11 +291,12 @@ COPY . .
 RUN pip install --no-cache-dir -r requirements.txt
 
 EXPOSE 8000
-CMD ["fastmcp", "run", "server:mcp", "--transport", "http", "--port", "8000"]
+CMD ["fastmcp", "run", "server.py:mcp", "--transport", "http", "--port", "8000"]
 ```
 
 Build & Run
 ```bash
 docker build -t mcp-finance-intel .
 docker run -p 8000:8000 mcp-finance-intel
+
 ```
