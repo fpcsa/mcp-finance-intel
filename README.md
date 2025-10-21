@@ -308,7 +308,7 @@ COPY . .
 RUN pip install --no-cache-dir -r requirements.txt
 
 EXPOSE 8000
-CMD ["fastmcp", "run", "server:mcp", "--transport", "http", "--port", "8000"]
+CMD ["fastmcp", "run", "server.py:mcp", "--transport", "http", "--port", "8000"]
 ```
 
 Build & Run
@@ -325,5 +325,6 @@ you can support me here:
 <a href="https://buymeacoffee.com/fpcsa" target="_blank">
   <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" width="180" />
 </a>
+
 
 👉 [Buy Me a Coffee](https://buymeacoffee.com/fpcsa)
