@@ -83,7 +83,6 @@ class AnalyzeOutput(BaseModel):
     max_drawdown: float = Field(
         ..., description="Fractional drawdown (e.g., -0.25 = -25%)"
     )
-    rsi_last: float | None
     summary: str
     indicators: Optional[Dict[str, Any]] = None
     risk_extras: Optional[Dict[str, Any]] = None
@@ -180,9 +179,16 @@ def analyze_asset_tool(input: AnalyzeInput) -> AnalyzeOutput:
         atr14 = atr(df["high"], df["low"], df["close"], 14)
         bb = bbands(prices, 20, 2.0)
 
+        # keep SMA values for symmetry (you already computed sma_fast/slow)
+        sma20_last = float(sma_fast.dropna().iloc[-1]) if not sma_fast.dropna().empty else None
+        sma50_last = float(sma_slow.dropna().iloc[-1]) if not sma_slow.dropna().empty else None
+
         indicators_out = {
             "ema20": float(ema20.dropna().iloc[-1]) if not ema20.dropna().empty else None,
             "ema50": float(ema50.dropna().iloc[-1]) if not ema50.dropna().empty else None,
+            "sma20": sma20_last,
+            "sma50": sma50_last,
+            "rsi14": rsi_last,
             "macd": float(macd_df["macd"].dropna().iloc[-1]) if not macd_df["macd"].dropna().empty else None,
             "macd_signal": float(macd_df["macd_signal"].dropna().iloc[-1]) if not macd_df["macd_signal"].dropna().empty else None,
             "macd_hist": float(macd_df["macd_hist"].dropna().iloc[-1]) if not macd_df["macd_hist"].dropna().empty else None,
@@ -227,11 +233,11 @@ def analyze_asset_tool(input: AnalyzeInput) -> AnalyzeOutput:
         summary = f"{input.symbol} (0d) No usable data in the requested window. Signals are indicative only."
               
     summary = (
-    f"{input.symbol} ({bars_used}bars {input.interval}) regime: {regime}. "
-    f"Ann. vol: {vol:.2%}, Sharpe: {sr:.2f}, Max DD: {mdd:.2%}. "
-    + (f"RSI(14): {rsi_last:.1f}. " if rsi_last is not None else "")
-    + (" | " + " | ".join(extra_bits) if extra_bits else "")
-    + "  Signals are indicative only."
+        f"{input.symbol} ({bars_used}bars {input.interval}) regime: {regime}. "
+        f"Ann. vol: {vol:.2%}, Sharpe: {sr:.2f}, Max DD: {mdd:.2%}. "
+        + (f"RSI(14): {rsi_last:.1f}. " if rsi_last is not None else "")
+        + (" | " + " | ".join(extra_bits) if extra_bits else "")
+        + "  Signals are indicative only."
     )
 
     asof = _iso_now_utc()
@@ -243,13 +249,26 @@ def analyze_asset_tool(input: AnalyzeInput) -> AnalyzeOutput:
         "units": {
             "window_return": "fraction",
             "volatility_annualized": "fraction",
+            "sharpe": "unitless",
             "max_drawdown": "fraction",
+            "ema20": "price_units",
+            "ema50": "price_units",
+            "sma20": "price_units",
+            "sma50": "price_units",
+            "rsi14": "index(0..100)",
+            "macd": "price_units",
+            "macd_signal": "price_units",
+            "macd_hist": "price_units",
+            "atr14": "price_units",
+            "bb_upper": "price_units",
+            "bb_middle": "price_units", 
+            "bb_lower": "price_units",
+            "bb_percent": "fraction",
+            "bb_width": "percent", 
+            "sortino": "unitless",
             "var_hist_95": "fraction",
             "var_param_95": "fraction",
             "cvar_95": "fraction",
-            "bb_percent": "fraction",
-            "sharpe": "unitless",
-            "sortino": "unitless"
         }
     }
 
@@ -261,7 +280,6 @@ def analyze_asset_tool(input: AnalyzeInput) -> AnalyzeOutput:
         "volatility_annualized": round(vol, 6),
         "sharpe": round(sr, 6),
         "max_drawdown": round(mdd, 6),
-        "rsi_last": rsi_last,
         "summary": summary,
         "indicators": indicators_out or None,
         "risk_extras": risk_out or None,

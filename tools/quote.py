@@ -33,42 +33,38 @@ def is_crypto(symbol: str) -> bool:
     # Very simple heuristic: crypto pairs contain a slash (e.g., BTC/USDT)
     return bool(_CRYPTO_PATTERN.match(symbol))
 
-    # TODO: In future, is possible to extend this to support : or - conventions if needed (e.g., "BTC-USD").
+    # TODO: Is possible to extend this to support : or - conventions if needed (e.g., "BTC-USD").
 
 def quote_tool(input: QuoteInput) -> QuoteOutput:
     crypto_syms = [s for s in input.symbols if is_crypto(s)]
     equity_syms = [s for s in input.symbols if not is_crypto(s)]
 
-    results = []
-    if crypto_syms:
-        results.extend(ccxt_get_quote(crypto_syms))
-    if equity_syms:
-        results.extend(yf_get_quote(equity_syms))
+    results: List[Dict[str, Any]] = []
 
-    # Add NIA (Not Investment Advice) flag
+    # --- Crypto symbols ---
+    for sym in crypto_syms:
+        try:
+            res = ccxt_get_quote([sym])  # always returns a list
+            results.extend(res)
+        except Exception as e:
+            results.append({
+                "symbol": sym,
+                "source": "ccxt:binance",
+                "error": str(e),
+                "note": "Failed to fetch crypto quote from ccxt."
+            })
+
+    # --- Equity symbols ---
+    for sym in equity_syms:
+        try:
+            res = yf_get_quote([sym])
+            results.extend(res)
+        except Exception as e:
+            results.append({
+                "symbol": sym,
+                "source": "yfinance",
+                "error": str(e),
+                "note": "Failed to fetch equity quote from yfinance."
+            })
+
     return QuoteOutput(results=results, not_investment_advice=True)
-
-"""
-TODO:
-Possible future enhancements
-
-Error handling / partial results
-
-Wrap adapter calls in try/except to avoid entire failure if one symbol errors.
-
-e.g.:
-
-try:
-    results.extend(ccxt_get_quote(crypto_syms))
-except Exception as e:
-    results.append({"symbol": sym, "error": str(e)})
-
-
-Dynamic exchange support
-
-Allow selecting different CCXT exchanges (Binance, Coinbase, etc.) in the future.
-
-Optional metadata fields
-
-Add timestamps or quote latency (time taken) if needed for monitoring.
-"""
