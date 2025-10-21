@@ -280,6 +280,23 @@ do not use for live trading or financial decision-making.
 - Caching, LLM summaries, SQLite persistence 
 - full OpenMCP compliance
 
+## Claude Desktop Configuration
+```json
+{
+  "mcpServers": {
+    "finance-intel": {
+      "command": "C:\\PATH_TO_PROJECT\\.venv\\Scripts\\fastmcp.exe",
+      "args": [
+        "run",
+        "C:\\PATH_TO_PROJECT\\mcp-finance-intel\\server.py:mcp"
+      ],
+      "cwd": "C:\\PATH_TO_PROJECT\\mcp-finance-intel"
+    }
+  }
+}
+
+```
+
 ## 🐳 Optional: Run in Docker
 You can run the MCP server in a containerized environment:
 
