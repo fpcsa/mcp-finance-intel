@@ -291,12 +291,22 @@ COPY . .
 RUN pip install --no-cache-dir -r requirements.txt
 
 EXPOSE 8000
-CMD ["fastmcp", "run", "server.py:mcp", "--transport", "http", "--port", "8000"]
+CMD ["fastmcp", "run", "server:mcp", "--transport", "http", "--port", "8000"]
 ```
 
 Build & Run
 ```bash
 docker build -t mcp-finance-intel .
 docker run -p 8000:8000 mcp-finance-intel
-
 ```
+
+## ☕ Support the Project
+
+If you enjoy using **mcp-finance-intel** and want to help me keep building,  
+you can support me here:
+
+<a href="https://buymeacoffee.com/fpcsa" target="_blank">
+  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" width="180" />
+</a>
+
+👉 [Buy Me a Coffee](https://buymeacoffee.com/fpcsa)
