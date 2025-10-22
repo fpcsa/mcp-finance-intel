@@ -74,7 +74,7 @@ pip install -r requirements.txt
 ## 🧭 Running the MCP Server
 ### ▶️ HTTP transport (recommended for testing)
 ```bash
-fastmcp run server:mcp --transport http --port 8000
+fastmcp run server.py:mcp --transport http --port 8000
 ```
 Server will be available at:
 http://localhost:8000
@@ -82,7 +82,7 @@ http://localhost:8000
 
 ### ▶️ STDIO transport (for LLM integration)
 ```bash
-fastmcp run server:mcp --transport stdio
+fastmcp run server.py:mcp --transport stdio
 ```
 Server will be available at:
 http://localhost:8000
@@ -281,6 +281,7 @@ do not use for live trading or financial decision-making.
 - full OpenMCP compliance
 
 ## Claude Desktop Configuration
+## Windows
 ```json
 {
   "mcpServers": {
@@ -294,7 +295,21 @@ do not use for live trading or financial decision-making.
     }
   }
 }
-
+```
+## Linux
+```json
+{
+  "mcpServers": {
+    "finance-intel": {
+      "command": "/ABSOLUTE/PATH/TO/mcp-finance-intel/.venv/bin/fastmcp",
+      "args": [
+        "run",
+        "server.py:mcp"
+      ],
+      "cwd": "/ABSOLUTE/PATH/TO/mcp-finance-intel"
+    }
+  }
+}
 ```
 
 ## 🐳 Optional: Run in Docker
@@ -325,6 +340,5 @@ you can support me here:
 <a href="https://buymeacoffee.com/fpcsa" target="_blank">
   <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" width="180" />
 </a>
-
 
 👉 [Buy Me a Coffee](https://buymeacoffee.com/fpcsa)
