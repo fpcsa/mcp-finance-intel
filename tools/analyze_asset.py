@@ -104,6 +104,18 @@ def _checksum(obj: Any) -> str:
     s = json.dumps(obj, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
+def _last(s: pd.Series | None) -> float | None:
+    """
+    Ensures getting a float or None (never crashes on empty/NaN).
+    """
+    if s is None:
+        return None
+    s = s.dropna()
+    return float(s.iloc[-1]) if not s.empty else None
+
+def _last_opt(series: pd.Series | None) -> float | None:
+    return _last(series) if series is not None else None
+
 def analyze_asset_tool(input: AnalyzeInput) -> AnalyzeOutput:
     """
     Routes automatically to either ccxt (crypto) or yfinance (equity) depending on symbol.
@@ -166,40 +178,67 @@ def analyze_asset_tool(input: AnalyzeInput) -> AnalyzeOutput:
     elif bars_used >= 50 and sma_fast.iloc[-1] < sma_slow.iloc[-1] and prices.iloc[-1] < sma_fast.iloc[-1]:
         regime = "down"
 
-    indicators_out: Dict[str, Any] = {}
+    indicators_out: Dict[str, Any] | None = {}
     risk_out: Dict[str, Any] = {}
 
     # --- base metrics already computed: prices, returns, vol, sr, mdd, rsi_last, regime ---
 
+    # ===== Technical indicators (with bar threshold & safe fallbacks) =====
+    indicators_out: Optional[Dict[str, Any]] = None
+    
     if input.mode in ("technical", "full"):
-        # Need OHLC for ATR/BB; df has ['open','high','low','close','volume']
-        ema20 = ema(prices, 20)
-        ema50 = ema(prices, 50)
-        macd_df = macd(prices)  # macd, macd_signal, macd_hist
-        atr14 = atr(df["high"], df["low"], df["close"], 14)
-        bb = bbands(prices, 20, 2.0)
+        indicators_out = {}
 
-        # keep SMA values for symmetry (you already computed sma_fast/slow)
-        sma20_last = float(sma_fast.dropna().iloc[-1]) if not sma_fast.dropna().empty else None
-        sma50_last = float(sma_slow.dropna().iloc[-1]) if not sma_slow.dropna().empty else None
+    # Helper: only keep last value if the series has enough bars (guarded by _last anyway)
+    def _available(series: pd.Series | None, required: int) -> float | None:
+        return _last(series) if bars_used >= required else None
 
-        indicators_out = {
-            "ema20": float(ema20.dropna().iloc[-1]) if not ema20.dropna().empty else None,
-            "ema50": float(ema50.dropna().iloc[-1]) if not ema50.dropna().empty else None,
-            "sma20": sma20_last,
-            "sma50": sma50_last,
-            "rsi14": rsi_last,
-            "macd": float(macd_df["macd"].dropna().iloc[-1]) if not macd_df["macd"].dropna().empty else None,
-            "macd_signal": float(macd_df["macd_signal"].dropna().iloc[-1]) if not macd_df["macd_signal"].dropna().empty else None,
-            "macd_hist": float(macd_df["macd_hist"].dropna().iloc[-1]) if not macd_df["macd_hist"].dropna().empty else None,
-            "atr14": float(atr14.dropna().iloc[-1]) if not atr14.dropna().empty else None,
-            "bb_upper": float(bb["bb_upper"].dropna().iloc[-1]) if not bb["bb_upper"].dropna().empty else None,
-            "bb_middle": float(bb["bb_middle"].dropna().iloc[-1]) if not bb["bb_middle"].dropna().empty else None,
-            "bb_lower": float(bb["bb_lower"].dropna().iloc[-1]) if not bb["bb_lower"].dropna().empty else None,
-            "bb_percent": float(bb["bb_percent"].dropna().iloc[-1]) if not bb["bb_percent"].dropna().empty else None,
-            "bb_width": float(bb["bb_width"].dropna().iloc[-1]) if not bb["bb_width"].dropna().empty else None,
-        }
+    # Need OHLC for ATR/BB
+    o, h, l, c = df["open"], df["high"], df["low"], df["close"]
 
+    # Precompute series (safe even with short windows; _last handles NaNs)
+    ema20_s = ema(prices, 20) if bars_used >= 20 else None
+    ema50_s = ema(prices, 50) if bars_used >= 50 else None
+    macd_df   = macd(prices) if bars_used >= 35 else None
+    atr14_s = atr(h, l, c, 14) if bars_used >= 15 else None # ATR14 needs at least 14+1
+    bb = bbands(prices, 20, 2.0) if bars_used >= 20 else None
+
+    # keep SMA values for symmetry (already computed sma_fast/slow above)
+    sma20_last = _available(sma_fast, 20)   # sma_fast is SMA(20)
+    sma50_last = _available(sma_slow, 50)   # sma_slow is SMA(50)
+
+    # MACD components (line requires ~26; signal/hist typically require ~35)
+    macd_line = macd_sig = macd_hist = None
+    if isinstance(macd_df, pd.DataFrame):
+        macd_line = _last(macd_df["macd"]) if "macd" in macd_df else None
+        macd_sig  = _last(macd_df["macd_signal"]) if "macd_signal" in macd_df else None
+        macd_hist = _last(macd_df["macd_hist"]) if "macd_hist" in macd_df else None
+
+    indicators_out.update({
+        "ema20": _last_opt(ema20_s),
+        "ema50": _last_opt(ema50_s),
+        "sma20": sma20_last,
+        "sma50": sma50_last,
+        "rsi14": rsi_last,
+        "macd": macd_line,
+        "macd_signal": macd_sig,
+        "macd_hist": macd_hist,
+        "atr14": _last_opt(atr14_s),
+        "bb_upper": _last(bb["bb_upper"]) if isinstance(bb, pd.DataFrame) and "bb_upper" in bb else None,
+        "bb_middle": _last(bb["bb_middle"]) if isinstance(bb, pd.DataFrame) and "bb_middle" in bb else None,
+        "bb_lower": _last(bb["bb_lower"]) if isinstance(bb, pd.DataFrame) and "bb_lower" in bb else None,
+        "bb_percent": _last(bb["bb_percent"]) if isinstance(bb, pd.DataFrame) and "bb_percent" in bb else None,
+        "bb_width": _last(bb["bb_width"]) if isinstance(bb, pd.DataFrame) and "bb_width" in bb else None,
+    })
+
+    # If everything ends up None/empty, normalize to None to keep schema tidy
+    indicators_out = {k: v for k, v in indicators_out.items() if v is not None}
+
+    # If everything ended up empty, use None; otherwise keep the dict
+    if not indicators_out:
+        indicators_out = None
+
+    # ===== Risk extras (unchanged) =====
     if input.mode in ("risk_plus", "full"):
         sortino_val = sortino_ratio(returns)
         var_hist = value_at_risk(returns, confidence=0.95)
@@ -212,10 +251,11 @@ def analyze_asset_tool(input: AnalyzeInput) -> AnalyzeOutput:
             "cvar_95": round(cvar, 6),
         }
 
-    # Build summary add-ons (kept compact)
-    extra_bits = []
+    # ===== Summary add-ons (only if we actually have indicators/risk) =====
+    extra_bits: list[str] = []
     if window_return is not None:
         extra_bits.append(f"Window ret: {window_return:+.2%}")
+
     if indicators_out:
         mh = indicators_out.get("macd_hist")
         if mh is not None:
@@ -223,22 +263,27 @@ def analyze_asset_tool(input: AnalyzeInput) -> AnalyzeOutput:
         atr14_v = indicators_out.get("atr14")
         if atr14_v is not None and bars_used > 0 and prices.iloc[-1] != 0:
             extra_bits.append(f"ATR(14)/P: {atr14_v/prices.iloc[-1]:.2%}")
-        if indicators_out.get("bb_percent") is not None:
-            extra_bits.append(f"%B: {indicators_out['bb_percent']:.2f}")
-    if risk_out:
-        extra_bits.append(f"Sortino: {risk_out['sortino']:.2f}")
-        extra_bits.append(f"VaR95 (hist): {risk_out['var_hist_95']:.2%}")
+        bp = indicators_out.get("bb_percent")
+        if bp is not None:
+            extra_bits.append(f"%B: {bp:.2f}")
 
+    if risk_out:
+        if risk_out.get("sortino") is not None:
+            extra_bits.append(f"Sortino: {risk_out['sortino']:.2f}")
+        if risk_out.get("var_hist_95") is not None:
+            extra_bits.append(f"VaR95 (hist): {risk_out['var_hist_95']:.2%}")
+
+    # ===== Summary string =====
     if bars_used == 0:
-        summary = f"{input.symbol} (0d) No usable data in the requested window. Signals are indicative only."
-              
-    summary = (
-        f"{input.symbol} ({bars_used}bars {input.interval}) regime: {regime}. "
-        f"Ann. vol: {vol:.2%}, Sharpe: {sr:.2f}, Max DD: {mdd:.2%}. "
-        + (f"RSI(14): {rsi_last:.1f}. " if rsi_last is not None else "")
-        + (" | " + " | ".join(extra_bits) if extra_bits else "")
-        + "  Signals are indicative only."
-    )
+        summary = f"{input.symbol} (0 bars {input.interval}) No usable data in the requested window. Signals are indicative only."
+    else:
+        summary = (
+            f"{input.symbol} ({bars_used} bars {input.interval}) regime: {regime}. "
+            f"Ann. vol: {vol:.2%}, Sharpe: {sr:.2f}, Max DD: {mdd:.2%}. "
+            + ("RSI(14): " + f"{rsi_last:.1f}. " if rsi_last is not None else "")
+            + (" | " + " | ".join(extra_bits) if extra_bits else "")
+            + "  Signals are indicative only."
+        )
 
     asof = _iso_now_utc()
     src = payload["source"]
@@ -264,7 +309,7 @@ def analyze_asset_tool(input: AnalyzeInput) -> AnalyzeOutput:
             "bb_middle": "price_units", 
             "bb_lower": "price_units",
             "bb_percent": "fraction",
-            "bb_width": "percent", 
+            "bb_width": "fraction", 
             "sortino": "unitless",
             "var_hist_95": "fraction",
             "var_param_95": "fraction",

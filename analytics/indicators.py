@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from typing import Optional
 
 try:
     import pandas_ta as ta
@@ -69,7 +70,83 @@ def rsi(series: pd.Series, length: int = 14) -> pd.Series:
 # Trend / Oscillator Combos
 # -------------------------
 
-def macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> pd.DataFrame:
+def macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Optional[pd.DataFrame]:
+    """
+    Moving Average Convergence Divergence (MACD).
+    Returns a DataFrame with columns: ['macd', 'macd_signal', 'macd_hist'] or None if insufficient data.
+
+    Rules:
+    - Require at least (slow + signal) bars to return a meaningful MACD; otherwise return None.
+    - If pandas_ta is available, use it but guard against None/empty/missing columns.
+    - Otherwise compute a stable pure-Pandas version with ewm (min_periods to avoid junk).
+
+    Parameters
+    ----------
+    series : pd.Series
+        Price series (close). Must be numeric and indexed.
+    fast, slow, signal : int
+        Standard MACD parameters.
+
+    Returns
+    -------
+    Optional[pd.DataFrame]
+        DataFrame with columns ['macd','macd_signal','macd_hist'] aligned to `series.index`,
+        or None when not enough data.
+    """
+    # Hard gate: need at least slow + signal bars for a meaningful MACD/signal
+    if series is None or len(series.dropna()) < (slow + signal):
+        return None
+
+    # Try pandas_ta first (if available)
+    if _HAS_TA:
+        try:
+            df = ta.macd(series, fast=fast, slow=slow, signal=signal)
+        except Exception:
+            df = None
+
+        # Guard: pandas_ta can return None/empty with short or bad input
+        if isinstance(df, pd.DataFrame) and not df.empty:
+            # Find ta column names safely
+            macd_col = next((c for c in df.columns if c.startswith("MACD_")), None)
+            sig_col  = next((c for c in df.columns if c.startswith("MACDs_")), None)
+            hist_col = next((c for c in df.columns if c.startswith("MACDh_")), None)
+
+            # If any column missing, treat as insufficient/unsupported
+            if macd_col and sig_col and hist_col:
+                out = pd.DataFrame(index=df.index)
+                out["macd"]        = df[macd_col]
+                out["macd_signal"] = df[sig_col]
+                out["macd_hist"]   = df[hist_col]
+                return out
+
+        # fall through to pure-Pandas fallback
+
+    # Pure-Pandas fallback (stable & guarded)
+    # Use ewm with min_periods to avoid producing bogus early values
+    ema_fast = series.ewm(span=fast, adjust=False, min_periods=fast).mean()
+    ema_slow = series.ewm(span=slow, adjust=False, min_periods=slow).mean()
+
+    macd_line = ema_fast - ema_slow
+
+    # The signal line itself needs `signal` periods of macd_line
+    signal_line = macd_line.ewm(span=signal, adjust=False, min_periods=signal).mean()
+    hist = macd_line - signal_line
+
+    out = pd.DataFrame(
+        {"macd": macd_line, "macd_signal": signal_line, "macd_hist": hist},
+        index=series.index
+    )
+
+    # If after guards we still don't have enough non-null points in signal/hist, return None
+    # (This keeps behavior consistent with the ta-based branch.)
+    sufficient = (
+        out["macd_signal"].dropna().shape[0] >= 1 and
+        out["macd_hist"].dropna().shape[0] >= 1
+    )
+    return out if sufficient else None
+
+
+def macd_old(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> pd.DataFrame:
     """
     Moving Average Convergence Divergence.
     Returns DataFrame with columns: macd, macd_signal, macd_hist.
@@ -152,7 +229,7 @@ def bbands(series: pd.Series, length: int = 20, stdev: float = 2.0) -> pd.DataFr
         out["bb_lower"] = df[bbl]
         out["bb_middle"] = df[bbm]
         out["bb_upper"] = df[bbu]
-        out["bb_width"] = df[bbw]
+        out["bb_width"] = df[bbw] / 100.0
         out["bb_percent"] = df[bbp]
         return out
 
