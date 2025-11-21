@@ -214,29 +214,31 @@ def analyze_asset_tool(input: AnalyzeInput) -> AnalyzeOutput:
         macd_sig  = _last(macd_df["macd_signal"]) if "macd_signal" in macd_df else None
         macd_hist = _last(macd_df["macd_hist"]) if "macd_hist" in macd_df else None
 
-    indicators_out.update({
-        "ema20": _last_opt(ema20_s),
-        "ema50": _last_opt(ema50_s),
-        "sma20": sma20_last,
-        "sma50": sma50_last,
-        "rsi14": rsi_last,
-        "macd": macd_line,
-        "macd_signal": macd_sig,
-        "macd_hist": macd_hist,
-        "atr14": _last_opt(atr14_s),
-        "bb_upper": _last(bb["bb_upper"]) if isinstance(bb, pd.DataFrame) and "bb_upper" in bb else None,
-        "bb_middle": _last(bb["bb_middle"]) if isinstance(bb, pd.DataFrame) and "bb_middle" in bb else None,
-        "bb_lower": _last(bb["bb_lower"]) if isinstance(bb, pd.DataFrame) and "bb_lower" in bb else None,
-        "bb_percent": _last(bb["bb_percent"]) if isinstance(bb, pd.DataFrame) and "bb_percent" in bb else None,
-        "bb_width": _last(bb["bb_width"]) if isinstance(bb, pd.DataFrame) and "bb_width" in bb else None,
-    })
+    if indicators_out is not None:
+        indicators_out.update({
+            "ema20": _last_opt(ema20_s),
+            "ema50": _last_opt(ema50_s),
+            "sma20": sma20_last,
+            "sma50": sma50_last,
+            "rsi14": rsi_last,
+            "macd": macd_line,
+            "macd_signal": macd_sig,
+            "macd_hist": macd_hist,
+            "atr14": _last_opt(atr14_s),
+            "bb_upper": _last(bb["bb_upper"]) if isinstance(bb, pd.DataFrame) and "bb_upper" in bb else None,
+            "bb_middle": _last(bb["bb_middle"]) if isinstance(bb, pd.DataFrame) and "bb_middle" in bb else None,
+            "bb_lower": _last(bb["bb_lower"]) if isinstance(bb, pd.DataFrame) and "bb_lower" in bb else None,
+            "bb_percent": _last(bb["bb_percent"]) if isinstance(bb, pd.DataFrame) and "bb_percent" in bb else None,
+            "bb_width": _last(bb["bb_width"]) if isinstance(bb, pd.DataFrame) and "bb_width" in bb else None,
+        })
 
     # If everything ends up None/empty, normalize to None to keep schema tidy
-    indicators_out = {k: v for k, v in indicators_out.items() if v is not None}
+    if indicators_out is not None:
+        indicators_out = {k: v for k, v in indicators_out.items() if v is not None}
 
-    # If everything ended up empty, use None; otherwise keep the dict
-    if not indicators_out:
-        indicators_out = None
+        # If everything ended up empty, use None; otherwise keep the dict
+        if not indicators_out:
+            indicators_out = None
 
     # ===== Risk extras (unchanged) =====
     if input.mode in ("risk_plus", "full"):
