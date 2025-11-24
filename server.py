@@ -63,6 +63,17 @@ def analyze_asset(input: AnalyzeInput) -> AnalyzeOutput:
     """
     return analyze_asset_tool(input)
 
+"""
 if __name__ == "__main__":
     # For manual HTTP testing
     mcp.run(transport="http", port=8000)
+"""
+
+if __name__ == "__main__":
+    # For manual HTTP testing / Docker
+    mcp.run(
+        transport="http",      # alias of streamable-http on recent FastMCP
+        host="0.0.0.0",        # IMPORTANT: listen on all interfaces
+        port=8000,
+        path="/mcp"            # keep endpoint as /mcp
+    )
